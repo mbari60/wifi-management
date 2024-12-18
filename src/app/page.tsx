@@ -31,111 +31,99 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-
-// Subscription Model Interface
-interface Subscription {
-  id: number;
-  name: string;
-  amount: number;
-  description: string;
-  validity_hours: number;
-}
+import { api } from "../lib/utils";
 
 const App: React.FC = () => {
-  const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
-  const [selectedSubscription, setSelectedSubscription] =
-    useState<Subscription | null>(null);
+  const [subscriptions, setSubscriptions] = useState<any[]>([]);
+  const [selectedSubscription, setSelectedSubscription] = useState<any | null>(null);
   const [isPhoneModalOpen, setIsPhoneModalOpen] = useState(false);
   const [phoneNumber, setPhoneNumber] = useState("");
-  const [paymentStatus, setPaymentStatus] = useState<
-    "idle" | "pending" | "success" | "failed"
-  >("idle");
+  const [paymentStatus, setPaymentStatus] = useState<"idle" | "pending" | "success" | "failed">("idle");
+  const [paymentTimeout, setPaymentTimeout] = useState<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    const fetchSubscriptions = async () => {
-      const dummyData: Subscription[] = [
-        {
-          id: 1,
-          name: "Basic Plan",
-          amount: 100,
-          description: "Quick Access",
-          validity_hours: 1,
-        },
-        {
-          id: 2,
-          name: "Standard Plan",
-          amount: 250,
-          description: "Extended Browsing",
-          validity_hours: 5,
-        },
-        {
-          id: 3,
-          name: "Premium Plan",
-          amount: 500,
-          description: "Full Day Access",
-          validity_hours: 48,
-        },
-        {
-          id: 4,
-          name: "Ultra Plan",
-          amount: 700,
-          description: "Unlimited Experience",
-          validity_hours: 24,
-        },
-      ];
-      setSubscriptions(dummyData);
+    const fetchHotspot = async () => {
+      try {
+        const response = await api.get("/hotspot");
+        setSubscriptions(response.data);
+      } catch (error) {
+        console.error("Error fetching hotspot data:", error);
+      }
     };
-
-    fetchSubscriptions();
+    fetchHotspot();
   }, []);
 
-  const handleSubscriptionSelect = (subscription: Subscription) => {
+  const handleSubscriptionSelect = (subscription: any) => {
     setSelectedSubscription(subscription);
     setIsPhoneModalOpen(true);
   };
 
-  const handleProceedToPayment = () => {
-    if (!phoneNumber) return;
+  const handleProceedToPayment = async () => {
+    if (!phoneNumber || !selectedSubscription) return;
 
     setPaymentStatus("pending");
 
-    // Simulated payment verification
-    setTimeout(() => {
-      // Randomly simulate success or failure
-      const randomSuccess = Math.random() > 0.5;
-      setPaymentStatus(randomSuccess ? "success" : "failed");
-    }, 3000);
+    // Send the payment request to the endpoint
+    try {
+      await api.post("http://127.0.0.1:5600/payment", {
+        phone_number: phoneNumber,
+        hotspot_id: selectedSubscription.id,
+      });
+
+      // Start polling the payment status every minute
+      let elapsedTime = 0;
+      const intervalId = setInterval(async () => {
+        try {
+          const response = await api.get(
+            `http://127.0.0.1:5600/payment?phone_number=${phoneNumber}`
+          );
+          const latestPayment = response.data.reduce((prev: any, current: any) => {
+            return prev.id > current.id ? prev : current;
+          });
+
+          if (latestPayment.status === "success") {
+            clearInterval(intervalId);
+            setPaymentStatus("success");
+          } else if (elapsedTime >= 5) {
+            clearInterval(intervalId);
+            setPaymentStatus("failed");
+          } else {
+            elapsedTime += 1;
+          }
+        } catch (error) {
+          console.error("Error checking payment status:", error);
+          clearInterval(intervalId);
+          setPaymentStatus("failed");
+        }
+      }, 60000); // Poll every minute
+      setPaymentTimeout(intervalId);
+    } catch (error) {
+      console.error("Error processing payment:", error);
+      setPaymentStatus("failed");
+    }
+  };
+
+  const formatDuration = (duration: number) => {
+    if (duration < 60) {
+      return `${duration} minutes`;
+    } else if (duration >= 60 && duration < 1440) {
+      return `${(duration / 60).toFixed(1)} hours`;
+    } else {
+      return `${(duration / 1440).toFixed(1)} days`;
+    }
   };
 
   const renderSubscriptions = () => {
-    const colorVariants = [
-      "bg-blue-500",
-      "bg-green-500",
-      "bg-purple-500",
-      "bg-red-500",
-    ];
+    const colorVariants = ["bg-blue-500", "bg-green-500", "bg-purple-500", "bg-red-500"];
 
     return subscriptions.map((subscription, index) => (
       <Card
         key={subscription.id}
-        className={`
-          w-full 
-          max-w-sm 
-          mx-auto 
-          transition-all 
-          duration-300 
-          hover:shadow-xl 
-          hover:scale-105 
-          border-2 
-          ${colorVariants[index % colorVariants.length]}/20 
-          hover:border-opacity-50
-        `}
+        className={`w-full max-w-sm mx-auto transition-all duration-300 hover:shadow-xl hover:scale-105 border-2 ${colorVariants[index % colorVariants.length]}/20 hover:border-opacity-50`}
       >
         <CardHeader className="relative pb-0">
           <div
-            className={`absolute top-0 right-0 p-2 ${
-              colorVariants[index % colorVariants.length]
-            } text-white rounded-bl-lg`}
+            className={`absolute top-0 right-0 p-2 ${colorVariants[index % colorVariants.length]} text-white rounded-bl-lg`}
           >
             <Network size={24} />
           </div>
@@ -160,9 +148,7 @@ const App: React.FC = () => {
                 <TooltipTrigger>
                   <span className="flex items-center">
                     <Timer className="mr-2 text-gray-500" size={16} />
-                    {subscription.validity_hours >= 24
-                      ? `${Math.floor(subscription.validity_hours / 24)} days`
-                      : `${subscription.validity_hours} hours`}
+                    {formatDuration(subscription.hotspot_duration)}
                   </span>
                 </TooltipTrigger>
                 <TooltipContent>Plan duration</TooltipContent>
@@ -171,15 +157,7 @@ const App: React.FC = () => {
           </div>
           <Button
             onClick={() => handleSubscriptionSelect(subscription)}
-            className={`
-              w-full 
-              ${colorVariants[index % colorVariants.length]} 
-              hover:${colorVariants[index % colorVariants.length].replace(
-                "bg-",
-                "bg-opacity-80 "
-              )} 
-              text-white
-            `}
+            className={`w-full ${colorVariants[index % colorVariants.length]} hover:${colorVariants[index % colorVariants.length].replace("bg-", "bg-opacity-80 ")} text-white`}
           >
             Select Plan
           </Button>
@@ -194,7 +172,7 @@ const App: React.FC = () => {
         return (
           <div className="space-y-4">
             <Input
-              placeholder="Enter M-Pesa Registered Phone Number"
+              placeholder="Enter M-Pesa Registered Phone Number 254XXXXXXXXX"
               value={phoneNumber}
               onChange={(e) => setPhoneNumber(e.target.value)}
               className="w-full"
@@ -278,20 +256,19 @@ const App: React.FC = () => {
                 onClick={() => setPaymentStatus("idle")}
                 className="bg-red-500 hover:bg-red-600 text-white"
               >
-                Try Again
+                Retry
               </Button>
               <Button
-                onClick={() => {
-                  setIsPhoneModalOpen(false);
-                  setPaymentStatus("idle");
-                }}
-                variant="outline"
+                onClick={() => setIsPhoneModalOpen(false)}
+                className="bg-gray-500 hover:bg-gray-600 text-white"
               >
-                Cancel
+                Close
               </Button>
             </div>
           </div>
         );
+      default:
+        return null;
     }
   };
 
@@ -321,7 +298,7 @@ const App: React.FC = () => {
             </li>
             <li className="flex items-center">
               <span className="mr-4 text-2xl font-bold text-blue-500">2</span>
-              Enter your M-Pesa registered phone number
+              Enter your M-Pesa registered phone number Format 254XXXXXXXXX
             </li>
             <li className="flex items-center">
               <span className="mr-4 text-2xl font-bold text-blue-500">3</span>
